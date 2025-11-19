@@ -37,6 +37,7 @@ async function run() {
 
     const usersCollection = client.db('usersDB').collection('users');
     const campaignsCollection = client.db('campaignDB').collection('campaigns');
+    const donationCollection = client.db('donationDB').collection('donations');
 
     // Create user
     app.post('/users', async (req, res) => {
@@ -388,6 +389,330 @@ async function run() {
         }
     });
 
+    // ==================== DONATIONS CRUD OPERATIONS ====================
+
+    // Create donation
+    app.post('/donations', async (req, res) => {
+        try {
+            const {
+                donorId,
+                donorEmail,
+                donorName,
+                campaignId,
+                campaignTitle,
+                charityId,
+                charityName,
+                amount,
+                currency,
+                paymentMethod,
+                transactionId,
+                anonymous,
+                status,
+            } = req.body || {};
+
+            if (!donorId || !campaignId || !amount) {
+                return res.status(400).send({ message: 'Missing required donation fields (donorId, campaignId, amount).' });
+            }
+
+            const donationToInsert = {
+                donorId,
+                donorEmail: donorEmail || null,
+                donorName: donorName || null,
+                campaignId,
+                campaignTitle: campaignTitle || null,
+                charityId: charityId || null,
+                charityName: charityName || null,
+                amount: Number(amount),
+                currency: currency || 'BDT',
+                paymentMethod: paymentMethod || 'bkash',
+                transactionId: transactionId || null,
+                anonymous: anonymous === true,
+                status: status || 'completed',
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            };
+
+            const result = await donationCollection.insertOne(donationToInsert);
+            res.status(201).send({ _id: result.insertedId, ...donationToInsert });
+        } catch (error) {
+            console.error('Failed to create donation', error);
+            res.status(500).send({ message: 'Failed to create donation.' });
+        }
+    });
+
+    // Get all donations with filters
+    app.get('/donations', async (req, res) => {
+        try {
+            const { donorId, campaignId, charityId, status, search } = req.query;
+            const filter = {};
+
+            if (donorId) {
+                filter.donorId = donorId;
+            }
+
+            if (campaignId) {
+                filter.campaignId = campaignId;
+            }
+
+            if (charityId) {
+                filter.charityId = charityId;
+            }
+
+            if (status) {
+                filter.status = status;
+            }
+
+            if (search) {
+                const regex = new RegExp(search, 'i');
+                filter.$or = [
+                    { donorName: regex },
+                    { donorEmail: regex },
+                    { campaignTitle: regex },
+                    { charityName: regex },
+                    { transactionId: regex },
+                ];
+            }
+
+            const donations = await donationCollection
+                .find(filter)
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(donations);
+        } catch (error) {
+            console.error('Failed to fetch donations', error);
+            res.status(500).send({ message: 'Failed to fetch donations.' });
+        }
+    });
+
+    // Get single donation
+    app.get('/donations/:id', async (req, res) => {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid donation id.' });
+        }
+
+        try {
+            const donation = await donationCollection.findOne({ _id: new ObjectId(id) });
+            if (!donation) {
+                return res.status(404).send({ message: 'Donation not found.' });
+            }
+
+            res.send(donation);
+        } catch (error) {
+            console.error('Failed to fetch donation', error);
+            res.status(500).send({ message: 'Failed to fetch donation.' });
+        }
+    });
+
+    // Get donations by donor
+    app.get('/donations/donor/:donorId', async (req, res) => {
+        const { donorId } = req.params;
+
+        try {
+            const donations = await donationCollection
+                .find({ donorId })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(donations);
+        } catch (error) {
+            console.error('Failed to fetch donations by donor', error);
+            res.status(500).send({ message: 'Failed to fetch donations by donor.' });
+        }
+    });
+
+    // Get donations by campaign
+    app.get('/donations/campaign/:campaignId', async (req, res) => {
+        const { campaignId } = req.params;
+
+        try {
+            const donations = await donationCollection
+                .find({ campaignId })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(donations);
+        } catch (error) {
+            console.error('Failed to fetch donations by campaign', error);
+            res.status(500).send({ message: 'Failed to fetch donations by campaign.' });
+        }
+    });
+
+    // Get donations by charity
+    app.get('/donations/charity/:charityId', async (req, res) => {
+        const { charityId } = req.params;
+
+        try {
+            const donations = await donationCollection
+                .find({ charityId })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(donations);
+        } catch (error) {
+            console.error('Failed to fetch donations by charity', error);
+            res.status(500).send({ message: 'Failed to fetch donations by charity.' });
+        }
+    });
+
+    // Update donation
+    app.put('/donations/:id', async (req, res) => {
+        const { id } = req.params;
+        const updates = req.body || {};
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid donation id.' });
+        }
+
+        try {
+            const updateDoc = {
+                ...updates,
+                updatedAt: new Date(),
+            };
+
+            if (updateDoc.amount !== undefined) {
+                updateDoc.amount = Number(updateDoc.amount);
+            }
+
+            if (updateDoc.anonymous !== undefined) {
+                updateDoc.anonymous = updateDoc.anonymous === true;
+            }
+
+            const result = await donationCollection.findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: updateDoc },
+                { returnDocument: 'after' }
+            );
+
+            if (!result.value) {
+                return res.status(404).send({ message: 'Donation not found.' });
+            }
+
+            res.send(result.value);
+        } catch (error) {
+            console.error('Failed to update donation', error);
+            res.status(500).send({ message: 'Failed to update donation.' });
+        }
+    });
+
+    // Update donation status
+    app.patch('/donations/:id/status', async (req, res) => {
+        const { id } = req.params;
+        const { status } = req.body || {};
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid donation id.' });
+        }
+
+        if (!status) {
+            return res.status(400).send({ message: 'Status is required.' });
+        }
+
+        try {
+            const result = await donationCollection.findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: { status, updatedAt: new Date() } },
+                { returnDocument: 'after' }
+            );
+
+            if (!result.value) {
+                return res.status(404).send({ message: 'Donation not found.' });
+            }
+
+            res.send(result.value);
+        } catch (error) {
+            console.error('Failed to update donation status', error);
+            res.status(500).send({ message: 'Failed to update donation status.' });
+        }
+    });
+
+    // Delete donation
+    app.delete('/donations/:id', async (req, res) => {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid donation id.' });
+        }
+
+        try {
+            const result = await donationCollection.deleteOne({ _id: new ObjectId(id) });
+            if (result.deletedCount === 0) {
+                return res.status(404).send({ message: 'Donation not found.' });
+            }
+
+            res.send({ message: 'Donation deleted successfully.' });
+        } catch (error) {
+            console.error('Failed to delete donation', error);
+            res.status(500).send({ message: 'Failed to delete donation.' });
+        }
+    });
+
+    // Get donation statistics for a donor
+    app.get('/donations/donor/:donorId/stats', async (req, res) => {
+        const { donorId } = req.params;
+
+        try {
+            const donations = await donationCollection
+                .find({ donorId })
+                .toArray();
+
+            const totalDonated = donations.reduce((sum, d) => sum + (d.amount || 0), 0);
+            const uniqueCampaigns = new Set(donations.map(d => d.campaignId));
+            const campaignsSupported = uniqueCampaigns.size;
+            const donationCount = donations.length;
+
+            // Calculate this month's donations
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+
+            const thisMonthDonations = donations.reduce((sum, donation) => {
+                const donationDate = new Date(donation.createdAt);
+                if (donationDate.getMonth() === currentMonth && donationDate.getFullYear() === currentYear) {
+                    return sum + (donation.amount || 0);
+                }
+                return sum;
+            }, 0);
+
+            res.send({
+                totalDonated,
+                campaignsSupported,
+                donationCount,
+                thisMonth: thisMonthDonations,
+                impact: Math.floor(totalDonated / 1000), // 1 person per 1000 BDT
+            });
+        } catch (error) {
+            console.error('Failed to fetch donation stats', error);
+            res.status(500).send({ message: 'Failed to fetch donation stats.' });
+        }
+    });
+
+    // Get donation statistics for a campaign
+    app.get('/donations/campaign/:campaignId/stats', async (req, res) => {
+        const { campaignId } = req.params;
+
+        try {
+            const donations = await donationCollection
+                .find({ campaignId })
+                .toArray();
+
+            const totalAmount = donations.reduce((sum, d) => sum + (d.amount || 0), 0);
+            const uniqueDonors = new Set(donations.map(d => d.donorId));
+            const donorCount = uniqueDonors.size;
+            const donationCount = donations.length;
+
+            res.send({
+                totalAmount,
+                donorCount,
+                donationCount,
+            });
+        } catch (error) {
+            console.error('Failed to fetch campaign donation stats', error);
+            res.status(500).send({ message: 'Failed to fetch campaign donation stats.' });
+        }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
