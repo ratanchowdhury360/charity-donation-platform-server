@@ -38,6 +38,7 @@ async function run() {
     const usersCollection = client.db('usersDB').collection('users');
     const campaignsCollection = client.db('campaignDB').collection('campaigns');
     const donationCollection = client.db('donationDB').collection('donations');
+    const reviewCollection = client.db('reviewDB').collection('reviews');
 
     // Create user
     app.post('/users', async (req, res) => {
@@ -711,6 +712,269 @@ async function run() {
         } catch (error) {
             console.error('Failed to fetch campaign donation stats', error);
             res.status(500).send({ message: 'Failed to fetch campaign donation stats.' });
+        }
+    });
+
+    // ==================== REVIEWS CRUD OPERATIONS ====================
+
+    // Create review
+    app.post('/reviews', async (req, res) => {
+        try {
+            const {
+                userId,
+                userName,
+                userEmail,
+                rating,
+                comment,
+            } = req.body || {};
+
+            if (!userId || !rating || !comment) {
+                return res.status(400).send({ message: 'Missing required review fields (userId, rating, comment).' });
+            }
+
+            if (rating < 1 || rating > 5) {
+                return res.status(400).send({ message: 'Rating must be between 1 and 5.' });
+            }
+
+            // Check if user already has a review
+            const existingReview = await reviewCollection.findOne({ userId });
+            if (existingReview) {
+                return res.status(409).send({ message: 'User already has a review. Please update your existing review.' });
+            }
+
+            const reviewToInsert = {
+                userId,
+                userName: userName || null,
+                userEmail: userEmail || null,
+                rating: Number(rating),
+                comment: comment.trim(),
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            };
+
+            const result = await reviewCollection.insertOne(reviewToInsert);
+            res.status(201).send({ _id: result.insertedId, ...reviewToInsert });
+        } catch (error) {
+            console.error('Failed to create review', error);
+            res.status(500).send({ message: 'Failed to create review.' });
+        }
+    });
+
+    // Get all reviews with filters
+    app.get('/reviews', async (req, res) => {
+        try {
+            const { userId, rating, search } = req.query;
+            const filter = {};
+
+            if (userId) {
+                filter.userId = userId;
+            }
+
+            if (rating) {
+                filter.rating = Number(rating);
+            }
+
+            if (search) {
+                const regex = new RegExp(search, 'i');
+                filter.$or = [
+                    { userName: regex },
+                    { userEmail: regex },
+                    { comment: regex },
+                ];
+            }
+
+            const reviews = await reviewCollection
+                .find(filter)
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(reviews);
+        } catch (error) {
+            console.error('Failed to fetch reviews', error);
+            res.status(500).send({ message: 'Failed to fetch reviews.' });
+        }
+    });
+
+    // Get single review
+    app.get('/reviews/:id', async (req, res) => {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid review id.' });
+        }
+
+        try {
+            const review = await reviewCollection.findOne({ _id: new ObjectId(id) });
+            if (!review) {
+                return res.status(404).send({ message: 'Review not found.' });
+            }
+
+            res.send(review);
+        } catch (error) {
+            console.error('Failed to fetch review', error);
+            res.status(500).send({ message: 'Failed to fetch review.' });
+        }
+    });
+
+    // Get reviews by user
+    app.get('/reviews/user/:userId', async (req, res) => {
+        const { userId } = req.params;
+
+        try {
+            const reviews = await reviewCollection
+                .find({ userId })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(reviews);
+        } catch (error) {
+            console.error('Failed to fetch reviews by user', error);
+            res.status(500).send({ message: 'Failed to fetch reviews by user.' });
+        }
+    });
+
+    // Update review
+    app.put('/reviews/:id', async (req, res) => {
+        const { id } = req.params;
+        const updates = req.body || {};
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid review id.' });
+        }
+
+        try {
+            const updateDoc = {
+                ...updates,
+                updatedAt: new Date(),
+            };
+
+            if (updateDoc.rating !== undefined) {
+                const rating = Number(updateDoc.rating);
+                if (rating < 1 || rating > 5) {
+                    return res.status(400).send({ message: 'Rating must be between 1 and 5.' });
+                }
+                updateDoc.rating = rating;
+            }
+
+            if (updateDoc.comment !== undefined) {
+                updateDoc.comment = updateDoc.comment.trim();
+            }
+
+            const result = await reviewCollection.findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: updateDoc },
+                { returnDocument: 'after' }
+            );
+
+            if (!result.value) {
+                return res.status(404).send({ message: 'Review not found.' });
+            }
+
+            res.send(result.value);
+        } catch (error) {
+            console.error('Failed to update review', error);
+            res.status(500).send({ message: 'Failed to update review.' });
+        }
+    });
+
+    // Update review rating
+    app.patch('/reviews/:id/rating', async (req, res) => {
+        const { id } = req.params;
+        const { rating } = req.body || {};
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid review id.' });
+        }
+
+        if (!rating || rating < 1 || rating > 5) {
+            return res.status(400).send({ message: 'Rating is required and must be between 1 and 5.' });
+        }
+
+        try {
+            const result = await reviewCollection.findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: { rating: Number(rating), updatedAt: new Date() } },
+                { returnDocument: 'after' }
+            );
+
+            if (!result.value) {
+                return res.status(404).send({ message: 'Review not found.' });
+            }
+
+            res.send(result.value);
+        } catch (error) {
+            console.error('Failed to update review rating', error);
+            res.status(500).send({ message: 'Failed to update review rating.' });
+        }
+    });
+
+    // Delete review
+    app.delete('/reviews/:id', async (req, res) => {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid review id.' });
+        }
+
+        try {
+            const result = await reviewCollection.deleteOne({ _id: new ObjectId(id) });
+            if (result.deletedCount === 0) {
+                return res.status(404).send({ message: 'Review not found.' });
+            }
+
+            res.send({ message: 'Review deleted successfully.' });
+        } catch (error) {
+            console.error('Failed to delete review', error);
+            res.status(500).send({ message: 'Failed to delete review.' });
+        }
+    });
+
+    // Get average rating
+    app.get('/reviews/stats/average', async (req, res) => {
+        try {
+            const reviews = await reviewCollection.find().toArray();
+            
+            if (reviews.length === 0) {
+                return res.send({
+                    averageRating: 0,
+                    totalReviews: 0,
+                    ratingDistribution: {
+                        5: 0,
+                        4: 0,
+                        3: 0,
+                        2: 0,
+                        1: 0
+                    }
+                });
+            }
+
+            const totalRating = reviews.reduce((sum, r) => sum + (r.rating || 0), 0);
+            const averageRating = (totalRating / reviews.length).toFixed(1);
+
+            // Calculate rating distribution
+            const ratingDistribution = {
+                5: 0,
+                4: 0,
+                3: 0,
+                2: 0,
+                1: 0
+            };
+
+            reviews.forEach(review => {
+                const rating = review.rating;
+                if (rating >= 1 && rating <= 5) {
+                    ratingDistribution[rating] = (ratingDistribution[rating] || 0) + 1;
+                }
+            });
+
+            res.send({
+                averageRating: parseFloat(averageRating),
+                totalReviews: reviews.length,
+                ratingDistribution
+            });
+        } catch (error) {
+            console.error('Failed to fetch review stats', error);
+            res.status(500).send({ message: 'Failed to fetch review stats.' });
         }
     });
 
