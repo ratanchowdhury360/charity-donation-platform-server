@@ -1036,7 +1036,7 @@ async function run() {
 
             const messages = await messagesCollection
                 .find(filter)
-                .sort({ createdAt: -1 })
+                .sort({ updatedAt: -1 })
                 .toArray();
 
             res.send(messages);
@@ -1052,7 +1052,7 @@ async function run() {
         try {
             const messages = await messagesCollection
                 .find({ userId })
-                .sort({ createdAt: -1 })
+                .sort({ updatedAt: -1 })
                 .toArray();
 
             res.send(messages);
@@ -1114,30 +1114,57 @@ async function run() {
 
     app.post('/messages/:id/reply', async (req, res) => {
         const { id } = req.params;
-        const { reply, adminId, adminName } = req.body || {};
+        const {
+            reply,
+            adminId,
+            adminName,
+            actorType,
+            userId,
+            userName
+        } = req.body || {};
 
         if (!ObjectId.isValid(id)) {
             return res.status(400).send({ message: 'Invalid message id.' });
         }
 
-        if (!reply || !reply.trim()) {
+        const trimmedReply = (reply || '').trim();
+        if (!trimmedReply) {
             return res.status(400).send({ message: 'Reply text is required.' });
         }
 
         try {
+            const existingMessage = await messagesCollection.findOne({ _id: new ObjectId(id) });
+            if (!existingMessage) {
+                return res.status(404).send({ message: 'Message not found.' });
+            }
+
+            const resolvedActorType = actorType || (adminId ? 'admin' : 'user');
+
+            if (resolvedActorType === 'user') {
+                if (!userId) {
+                    return res.status(400).send({ message: 'User id is required for user replies.' });
+                }
+                if (existingMessage.userId && existingMessage.userId !== userId) {
+                    return res.status(403).send({ message: 'You are not allowed to reply to this message.' });
+                }
+            }
+
             const replyPayload = {
-                message: reply.trim(),
-                adminId: adminId || null,
-                adminName: adminName || 'Admin',
+                message: trimmedReply,
+                actorType: resolvedActorType,
+                actorId: resolvedActorType === 'admin' ? (adminId || null) : (userId || null),
+                actorName: resolvedActorType === 'admin' ? (adminName || 'Admin') : (userName || 'You'),
                 createdAt: new Date(),
             };
+
+            const nextStatus = resolvedActorType === 'admin' ? 'responded' : 'open';
 
             const result = await messagesCollection.findOneAndUpdate(
                 { _id: new ObjectId(id) },
                 {
                     $push: { replies: replyPayload },
                     $set: {
-                        status: 'responded',
+                        status: nextStatus,
                         updatedAt: new Date(),
                         lastRepliedAt: new Date(),
                     },
