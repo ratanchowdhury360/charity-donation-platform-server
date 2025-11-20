@@ -39,6 +39,7 @@ async function run() {
     const campaignsCollection = client.db('campaignDB').collection('campaigns');
     const donationCollection = client.db('donationDB').collection('donations');
     const reviewCollection = client.db('reviewDB').collection('reviews');
+    const messagesCollection = client.db('supportDB').collection('messages');
 
     // Create user
     app.post('/users', async (req, res) => {
@@ -975,6 +976,183 @@ async function run() {
         } catch (error) {
             console.error('Failed to fetch review stats', error);
             res.status(500).send({ message: 'Failed to fetch review stats.' });
+        }
+    });
+
+    // ==================== SUPPORT & CONTACT MESSAGES ====================
+
+    app.post('/messages', async (req, res) => {
+        try {
+            const {
+                senderName,
+                senderEmail,
+                subject,
+                message,
+                body,
+                content,
+                userId,
+                userRole,
+                wantsReply,
+            } = req.body || {};
+
+            const finalMessage = (message || body || content || '').trim();
+
+            if (!senderName || !senderEmail || !finalMessage) {
+                return res.status(400).send({ message: 'Name, email, and message are required.' });
+            }
+
+            const messageDoc = {
+                senderName: senderName.trim(),
+                senderEmail: senderEmail.trim(),
+                subject: (subject || 'General Inquiry').trim(),
+                message: finalMessage,
+                userId: userId || null,
+                userRole: userRole || (userId ? 'user' : 'guest'),
+                wantsReply: wantsReply === true,
+                canReply: Boolean(userId),
+                status: 'open',
+                replies: [],
+                lastRepliedAt: null,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            };
+
+            const result = await messagesCollection.insertOne(messageDoc);
+            res.status(201).send({ _id: result.insertedId, ...messageDoc });
+        } catch (error) {
+            console.error('Failed to create message', error);
+            res.status(500).send({ message: 'Failed to create message.' });
+        }
+    });
+
+    app.get('/messages', async (req, res) => {
+        try {
+            const { status } = req.query;
+            const filter = {};
+
+            if (status && status !== 'all') {
+                filter.status = status;
+            }
+
+            const messages = await messagesCollection
+                .find(filter)
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(messages);
+        } catch (error) {
+            console.error('Failed to fetch messages', error);
+            res.status(500).send({ message: 'Failed to fetch messages.' });
+        }
+    });
+
+    app.get('/messages/user/:userId', async (req, res) => {
+        const { userId } = req.params;
+
+        try {
+            const messages = await messagesCollection
+                .find({ userId })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(messages);
+        } catch (error) {
+            console.error('Failed to fetch user messages', error);
+            res.status(500).send({ message: 'Failed to fetch user messages.' });
+        }
+    });
+
+    app.get('/messages/:id', async (req, res) => {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid message id.' });
+        }
+
+        try {
+            const message = await messagesCollection.findOne({ _id: new ObjectId(id) });
+            if (!message) {
+                return res.status(404).send({ message: 'Message not found.' });
+            }
+            res.send(message);
+        } catch (error) {
+            console.error('Failed to fetch message', error);
+            res.status(500).send({ message: 'Failed to fetch message.' });
+        }
+    });
+
+    app.patch('/messages/:id/status', async (req, res) => {
+        const { id } = req.params;
+        const { status } = req.body || {};
+        const allowedStatuses = ['open', 'responded', 'closed'];
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid message id.' });
+        }
+
+        if (!status || !allowedStatuses.includes(status)) {
+            return res.status(400).send({ message: 'Invalid or missing status.' });
+        }
+
+        try {
+            const result = await messagesCollection.findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: { status, updatedAt: new Date() } },
+                { returnDocument: 'after' }
+            );
+
+            if (!result.value) {
+                return res.status(404).send({ message: 'Message not found.' });
+            }
+
+            res.send(result.value);
+        } catch (error) {
+            console.error('Failed to update message status', error);
+            res.status(500).send({ message: 'Failed to update message status.' });
+        }
+    });
+
+    app.post('/messages/:id/reply', async (req, res) => {
+        const { id } = req.params;
+        const { reply, adminId, adminName } = req.body || {};
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: 'Invalid message id.' });
+        }
+
+        if (!reply || !reply.trim()) {
+            return res.status(400).send({ message: 'Reply text is required.' });
+        }
+
+        try {
+            const replyPayload = {
+                message: reply.trim(),
+                adminId: adminId || null,
+                adminName: adminName || 'Admin',
+                createdAt: new Date(),
+            };
+
+            const result = await messagesCollection.findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                {
+                    $push: { replies: replyPayload },
+                    $set: {
+                        status: 'responded',
+                        updatedAt: new Date(),
+                        lastRepliedAt: new Date(),
+                    },
+                },
+                { returnDocument: 'after' }
+            );
+
+            if (!result.value) {
+                return res.status(404).send({ message: 'Message not found.' });
+            }
+
+            res.send(result.value);
+        } catch (error) {
+            console.error('Failed to add reply', error);
+            res.status(500).send({ message: 'Failed to add reply.' });
         }
     });
 
