@@ -1197,12 +1197,16 @@ run().catch(console.dir);
 
 
 
-app.get('/',(req,res)=>{
-    res.send('Coffee server is getting hotter')
-})
+app.get('/', (req, res) => {
+    res.send('Charity Donation Platform API is running');
+});
 
-app.listen(port, ()=>{
-    console.log(`Coffee server running on port ${port}`)
-})
- 
+// Only start the listener when running locally. On Vercel, the
+// Express app is handled by the serverless function runtime.
+if (process.env.VERCEL !== '1') {
+    app.listen(port, () => {
+        console.log(`API server running on port ${port}`);
+    });
+}
 
+module.exports = app;
